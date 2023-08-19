@@ -29,6 +29,11 @@
 # include "gui_dwrite.h"
 #endif
 
+#include <dwmapi.h>
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+
 // values for "dead_key"
 #define DEAD_KEY_OFF			0	// no dead key
 #define DEAD_KEY_SET_DEFAULT		1	// dead key pressed
@@ -5438,6 +5443,9 @@ gui_mch_init(void)
     // changed them)
     highlight_gui_started();
 
+    // @amason Set the title bar color
+    gui_update_titlebar_color();
+
     /*
      * Start out by adding the configured border width into the border offset.
      */
@@ -8650,6 +8658,15 @@ netbeans_draw_multisign_indicator(int row)
     SetPixel(s_hdc, x+2, y, gui.currFgColor);
 }
 #endif
+
+void
+gui_update_titlebar_color()
+{
+    //BOOL dark_title = TRUE;
+    //DwmSetWindowAttribute(s_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark_title, sizeof(dark_title));
+    COLORREF color = (COLORREF)gui.back_pixel;
+    DwmSetWindowAttribute(s_hwnd, DWMWA_CAPTION_COLOR, &color, sizeof(color));
+}
 
 #if defined(FEAT_EVAL) || defined(PROTO)
 

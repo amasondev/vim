@@ -514,6 +514,9 @@ load_colors(char_u *name)
 	if (retval == OK)
 	    apply_autocmds(EVENT_COLORSCHEME, name, curbuf->b_fname,
 								FALSE, curbuf);
+#ifdef FEAT_GUI_MSWIN
+	gui_update_titlebar_color();
+#endif
     }
     recursive = FALSE;
 
