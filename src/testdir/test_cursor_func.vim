@@ -206,6 +206,11 @@ func Test_screenpos()
   nmenu WinBar.TEST :
   call assert_equal(#{col: 1, row: 2, endcol: 1, curscol: 1}, screenpos(win_getid(), 1, 1))
   nunmenu WinBar.TEST
+  call assert_equal(#{col: 1, row: 1, endcol: 1, curscol: 1}, screenpos(win_getid(), 1, 1))
+
+  call assert_equal(#{col: 0, row: 0, endcol: 0, curscol: 0}, screenpos(0, 0, 1))
+  call assert_equal(#{col: 0, row: 0, endcol: 0, curscol: 0}, screenpos(0, -1, 1))
+  call assert_equal(#{col: 1, row: 1, endcol: 1, curscol: 1}, screenpos(0, 1, -v:maxcol))
 endfunc
 
 func Test_screenpos_fold()
@@ -572,6 +577,11 @@ func Test_virtcol2col()
   call assert_equal(5, virtcol2col(0, 1, 5))
   call assert_equal(8, virtcol2col(0, 1, 7))
   call assert_equal(8, virtcol2col(0, 1, 8))
+
+  " These used to cause invalid memory access
+  call setline(1, '')
+  call assert_equal(0, virtcol2col(0, 1, 1))
+  call assert_equal(0, virtcol2col(0, 1, 2))
 
   let w = winwidth(0)
   call setline(2, repeat('a', w + 2))

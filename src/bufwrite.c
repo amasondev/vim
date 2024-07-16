@@ -690,7 +690,7 @@ buf_write(
     int		    write_undo_file = FALSE;
     context_sha256_T sha_ctx;
 #endif
-    unsigned int    bkc = get_bkc_value(buf);
+    unsigned int    bkc = get_bkc_flags(buf);
     pos_T	    orig_start = buf->b_op_start;
     pos_T	    orig_end = buf->b_op_end;
 
@@ -1471,6 +1471,9 @@ buf_write(
 # if defined(HAVE_SELINUX) || defined(HAVE_SMACK)
 			mch_copy_sec(fname, backup);
 # endif
+# ifdef FEAT_XATTR
+			mch_copy_xattr(fname, backup);
+# endif
 #endif
 
 			// copy the file.
@@ -1505,6 +1508,9 @@ buf_write(
 #endif
 #if defined(HAVE_SELINUX) || defined(HAVE_SMACK)
 			mch_copy_sec(fname, backup);
+#endif
+#ifdef FEAT_XATTR
+			mch_copy_xattr(fname, backup);
 #endif
 #ifdef MSWIN
 			(void)mch_copy_file_attribute(fname, backup);
@@ -2196,10 +2202,17 @@ restore_backup:
 	}
 #endif
 
-#if defined(HAVE_SELINUX) || defined(HAVE_SMACK)
+#if defined(HAVE_SELINUX) || defined(HAVE_SMACK) || defined(FEAT_XATTR)
 	// Probably need to set the security context.
 	if (!backup_copy)
+	{
+#if defined(HAVE_SELINUX) || defined(HAVE_SMACK)
 	    mch_copy_sec(backup, wfname);
+#endif
+#ifdef FEAT_XATTR
+	    mch_copy_xattr(backup, wfname);
+#endif
+	}
 #endif
 
 #ifdef UNIX

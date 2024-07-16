@@ -151,7 +151,7 @@ vim_strsave_shellescape(char_u *string, int do_special, int do_newline)
     char_u	*p;
     char_u	*d;
     char_u	*escaped_string;
-    int		l;
+    size_t	l;
     int		csh_like;
     int		fish_like;
     char_u	*shname;
@@ -272,8 +272,9 @@ vim_strsave_shellescape(char_u *string, int do_special, int do_newline)
 	    if (do_special && find_cmdline_var(p, &l) >= 0)
 	    {
 		*d++ = '\\';		// insert backslash
-		while (--l >= 0)	// copy the var
-		    *d++ = *p++;
+		memcpy(d, p, l);	// copy the var
+		d += l;
+		p += l;
 		continue;
 	    }
 	    if (*p == '\\' && fish_like)
@@ -770,6 +771,36 @@ concat_str(char_u *str1, char_u *str2)
     return dest;
 }
 
+#if defined(FEAT_EVAL) || defined(FEAT_RIGHTLEFT) || defined(PROTO)
+/*
+ * Reverse text into allocated memory.
+ * Returns the allocated string, NULL when out of memory.
+ */
+    char_u *
+reverse_text(char_u *s)
+{
+    size_t len = STRLEN(s);
+    char_u *rev = alloc(len + 1);
+    if (rev == NULL)
+	return NULL;
+
+    for (size_t s_i = 0, rev_i = len; s_i < len; ++s_i)
+    {
+	if (has_mbyte)
+	{
+	    int mb_len = (*mb_ptr2len)(s + s_i);
+	    rev_i -= mb_len;
+	    mch_memmove(rev + rev_i, s + s_i, mb_len);
+	    s_i += mb_len - 1;
+	}
+	else
+	    rev[--rev_i] = s[s_i];
+    }
+    rev[len] = NUL;
+    return rev;
+}
+#endif
+
 #if defined(FEAT_EVAL) || defined(PROTO)
 /*
  * Return string "str" in ' quotes, doubling ' characters.
@@ -855,47 +886,6 @@ string_count(char_u *haystack, char_u *needle, int ic)
 }
 
 /*
- * Reverse the string in 'str' and set the result in 'rettv'.
- */
-    void
-string_reverse(char_u *str, typval_T *rettv)
-{
-    rettv->v_type = VAR_STRING;
-    rettv->vval.v_string = NULL;
-    if (str == NULL)
-	return;
-
-    char_u	*rstr = vim_strsave(str);
-    rettv->vval.v_string = rstr;
-    if (rstr == NULL || *str == NUL)
-	return;
-
-    size_t	len = STRLEN(rstr);
-    if (has_mbyte)
-    {
-	char_u *src = str;
-	char_u *dest = rstr + len;
-
-	while (src < str + len)
-	{
-	    int clen = mb_ptr2len(src);
-	    dest -= clen;
-	    mch_memmove(dest, src, (size_t)clen);
-	    src += clen;
-	}
-    }
-    else
-    {
-	for (size_t i = 0; i < len / 2; i++)
-	{
-	    char tmp = rstr[len - i - 1];
-	    rstr[len - i - 1] = rstr[i];
-	    rstr[i] = tmp;
-	}
-    }
-}
-
-/*
  * Make a typval_T of the first character of "input" and store it in "output".
  * Return OK or FAIL.
  */
@@ -953,7 +943,6 @@ string_filter_map(
 	    break;
 	len = (int)STRLEN(tv.vval.v_string);
 
-	newtv.v_type = VAR_UNKNOWN;
 	set_vim_var_nr(VV_KEY, idx);
 	if (filter_map_one(&tv, expr, filtermap, fc, &newtv, &rem) == FAIL
 		|| did_emsg)
@@ -962,7 +951,7 @@ string_filter_map(
 	    clear_tv(&tv);
 	    break;
 	}
-	else if (filtermap != FILTERMAP_FILTER)
+	if (filtermap == FILTERMAP_MAP || filtermap == FILTERMAP_MAPNEW)
 	{
 	    if (newtv.v_type != VAR_STRING)
 	    {
@@ -974,7 +963,7 @@ string_filter_map(
 	    else
 		ga_concat(&ga, newtv.vval.v_string);
 	}
-	else if (!rem)
+	else if (filtermap == FILTERMAP_FOREACH || !rem)
 	    ga_concat(&ga, tv.vval.v_string);
 
 	clear_tv(&newtv);
@@ -1988,6 +1977,8 @@ f_trim(typval_T *argvars, typval_T *rettv)
     if (argvars[1].v_type == VAR_STRING)
     {
 	mask = tv_get_string_buf_chk(&argvars[1], buf2);
+	if (*mask == NUL)
+	    mask = NULL;
 
 	if (argvars[2].v_type != VAR_UNKNOWN)
 	{
@@ -2262,8 +2253,7 @@ enum
  */
     static int
 format_typeof(
-    const char	*type,
-    int		usetvs UNUSED)
+    const char	*type)
 {
     // allowed values: \0, h, l, L
     char    length_modifier = '\0';
@@ -2295,18 +2285,6 @@ format_typeof(
 	case 'O': fmt_spec = 'o'; length_modifier = 'l'; break;
 	default: break;
     }
-
-# if defined(FEAT_EVAL)
-    if (usetvs)
-    {
-	switch (fmt_spec)
-	{
-	    case 'd': case 'u': case 'o': case 'x': case 'X':
-		if (length_modifier == '\0')
-		    length_modifier = 'L';
-	}
-    }
-# endif
 
     // get parameter value, do initial processing
     switch (fmt_spec)
@@ -2341,7 +2319,7 @@ format_typeof(
 	    if (fmt_spec == 'p')
 		return TYPE_POINTER;
 	    else if (fmt_spec == 'b' || fmt_spec == 'B')
-		return TYPE_UNSIGNEDINT;
+		return TYPE_UNSIGNEDLONGLONGINT;
 	    else if (fmt_spec == 'd')
 	    {
 		// signed
@@ -2390,7 +2368,7 @@ format_typeof(
 format_typename(
     const char  *type)
 {
-    switch (format_typeof(type, FALSE))
+    switch (format_typeof(type))
     {
 	case TYPE_INT:
 	    return _(typename_int);
@@ -2444,7 +2422,8 @@ adjust_types(
 	if (*ap_types == NULL)
 	    new_types = ALLOC_CLEAR_MULT(const char *, arg);
 	else
-	    new_types = vim_realloc(*ap_types, arg * sizeof(const char *));
+	    new_types = vim_realloc((char **)*ap_types,
+						arg * sizeof(const char *));
 
 	if (new_types == NULL)
 	    return FAIL;
@@ -2477,7 +2456,7 @@ adjust_types(
 	}
 	else
 	{
-	    if (format_typeof(type, FALSE) != format_typeof((*ap_types)[arg - 1], FALSE))
+	    if (format_typeof(type) != format_typeof((*ap_types)[arg - 1]))
 	    {
 		semsg(_( e_positional_arg_num_type_inconsistent_str_str), arg, format_typename(type), format_typename((*ap_types)[arg - 1]));
 		return FAIL;
@@ -2489,6 +2468,55 @@ adjust_types(
 
     return OK;
 }
+
+    static void
+format_overflow_error(const char *pstart)
+{
+    size_t	arglen = 0;
+    char	*argcopy = NULL;
+    const char	*p = pstart;
+
+    while (VIM_ISDIGIT((int)(*p)))
+	++p;
+
+    arglen = p - pstart;
+    argcopy = ALLOC_CLEAR_MULT(char, arglen + 1);
+    if (argcopy != NULL)
+    {
+	strncpy(argcopy, pstart, arglen);
+	semsg(_( e_val_too_large), argcopy);
+	free(argcopy);
+    }
+    else
+	semsg(_(e_out_of_memory_allocating_nr_bytes), arglen);
+}
+
+#define MAX_ALLOWED_STRING_WIDTH 6400
+
+    static int
+get_unsigned_int(
+    const char *pstart,
+    const char **p,
+    unsigned int *uj)
+{
+    *uj = **p - '0';
+    ++*p;
+
+    while (VIM_ISDIGIT((int)(**p)) && *uj < MAX_ALLOWED_STRING_WIDTH)
+    {
+	*uj = 10 * *uj + (unsigned int)(**p - '0');
+	++*p;
+    }
+
+    if (*uj > MAX_ALLOWED_STRING_WIDTH)
+    {
+	format_overflow_error(pstart);
+	return FAIL;
+    }
+
+    return OK;
+}
+
 
     static int
 parse_fmt_types(
@@ -2533,6 +2561,7 @@ parse_fmt_types(
 	    // variable for positional arg
 	    int		pos_arg = -1;
 	    const char	*ptype = NULL;
+	    const char	*pstart = p+1;
 
 	    p++;  // skip '%'
 
@@ -2553,10 +2582,11 @@ parse_fmt_types(
 		}
 
 		// Positional argument
-		unsigned int uj = *p++ - '0';
+		unsigned int uj;
 
-		while (VIM_ISDIGIT((int)(*p)))
-		    uj = 10 * uj + (unsigned int)(*p++ - '0');
+		if (get_unsigned_int(pstart, &p, &uj) == FAIL)
+		    goto error;
+
 		pos_arg = uj;
 
 		any_pos = 1;
@@ -2593,10 +2623,10 @@ parse_fmt_types(
 		if (VIM_ISDIGIT((int)(*p)))
 		{
 		    // Positional argument field width
-		    unsigned int uj = *p++ - '0';
+		    unsigned int uj;
 
-		    while (VIM_ISDIGIT((int)(*p)))
-			uj = 10 * uj + (unsigned int)(*p++ - '0');
+		    if (get_unsigned_int(arg + 1, &p, &uj) == FAIL)
+			goto error;
 
 		    if (*p != '$')
 		    {
@@ -2619,14 +2649,15 @@ parse_fmt_types(
 		    CHECK_POS_ARG;
 		}
 	    }
-	    else if (VIM_ISDIGIT((int)(*(arg = p))))
+	    else if (VIM_ISDIGIT((int)(*p)))
 	    {
 		// size_t could be wider than unsigned int; make sure we treat
 		// argument like common implementations do
-		unsigned int uj = *p++ - '0';
+		const char *digstart = p;
+		unsigned int uj;
 
-		while (VIM_ISDIGIT((int)(*p)))
-		    uj = 10 * uj + (unsigned int)(*p++ - '0');
+		if (get_unsigned_int(digstart, &p, &uj) == FAIL)
+		    goto error;
 
 		if (*p == '$')
 		{
@@ -2647,10 +2678,10 @@ parse_fmt_types(
 		    if (VIM_ISDIGIT((int)(*p)))
 		    {
 			// Parse precision
-			unsigned int uj = *p++ - '0';
+			unsigned int uj;
 
-			while (VIM_ISDIGIT((int)(*p)))
-			    uj = 10 * uj + (unsigned int)(*p++ - '0');
+			if (get_unsigned_int(arg + 1, &p, &uj) == FAIL)
+			    goto error;
 
 			if (*p == '$')
 			{
@@ -2674,14 +2705,15 @@ parse_fmt_types(
 			CHECK_POS_ARG;
 		    }
 		}
-		else if (VIM_ISDIGIT((int)(*(arg = p))))
+		else if (VIM_ISDIGIT((int)(*p)))
 		{
 		    // size_t could be wider than unsigned int; make sure we
 		    // treat argument like common implementations do
-		    unsigned int uj = *p++ - '0';
+		    const char *digstart = p;
+		    unsigned int uj;
 
-		    while (VIM_ISDIGIT((int)(*p)))
-			uj = 10 * uj + (unsigned int)(*p++ - '0');
+		    if (get_unsigned_int(digstart, &p, &uj) == FAIL)
+			goto error;
 
 		    if (*p == '$')
 		    {
@@ -2707,7 +2739,7 @@ parse_fmt_types(
 		if (length_modifier == 'l' && *p == 'l')
 		{
 		    // double l = __int64 / varnumber_T
-		    length_modifier = 'L';
+		    // length_modifier = 'L';
 		    p++;
 		}
 	    }
@@ -2782,7 +2814,7 @@ parse_fmt_types(
     return OK;
 
 error:
-    vim_free(*ap_types);
+    vim_free((char**)*ap_types);
     *ap_types = NULL;
     *num_posarg = 0;
     return FAIL;
@@ -2794,7 +2826,8 @@ skip_to_arg(
     va_list	ap_start,
     va_list	*ap,
     int		*arg_idx,
-    int		*arg_cur)
+    int		*arg_cur,
+    const char	*fmt)
 {
     int		arg_min = 0;
 
@@ -2819,9 +2852,17 @@ skip_to_arg(
 
     for (*arg_cur = arg_min; *arg_cur < *arg_idx - 1; ++*arg_cur)
     {
-	const char *p = ap_types[*arg_cur];
+	const char *p;
 
-	int fmt_type = format_typeof(p, TRUE);
+	if (ap_types == NULL || ap_types[*arg_cur] == NULL)
+	{
+	    siemsg(e_aptypes_is_null_nr_str, *arg_cur, fmt);
+	    return;
+	}
+
+	p = ap_types[*arg_cur];
+
+	int fmt_type = format_typeof(p);
 
 	// get parameter value, do initial processing
 	switch (fmt_type)
@@ -2981,10 +3022,12 @@ vim_vsnprintf_typval(
 	    if (*ptype == '$')
 	    {
 		// Positional argument
-		unsigned int uj = *p++ - '0';
+		const char *digstart = p;
+		unsigned int uj;
 
-		while (VIM_ISDIGIT((int)(*p)))
-		    uj = 10 * uj + (unsigned int)(*p++ - '0');
+		if (get_unsigned_int(digstart, &p, &uj) == FAIL)
+		    goto error;
+
 		pos_arg = uj;
 
 		++p;
@@ -3015,16 +3058,18 @@ vim_vsnprintf_typval(
 	    if (*p == '*')
 	    {
 		int j;
+		const char *digstart = p + 1;
 
 		p++;
 
 		if (VIM_ISDIGIT((int)(*p)))
 		{
 		    // Positional argument field width
-		    unsigned int uj = *p++ - '0';
+		    unsigned int uj;
 
-		    while (VIM_ISDIGIT((int)(*p)))
-			uj = 10 * uj + (unsigned int)(*p++ - '0');
+		    if (get_unsigned_int(digstart, &p, &uj) == FAIL)
+			goto error;
+
 		    arg_idx = uj;
 
 		    ++p;
@@ -3034,8 +3079,15 @@ vim_vsnprintf_typval(
 # if defined(FEAT_EVAL)
 		    tvs != NULL ? tv_nr(tvs, &arg_idx) :
 # endif
-			(skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+			(skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+				     &arg_cur, fmt),
 			va_arg(ap, int));
+
+		if (j > MAX_ALLOWED_STRING_WIDTH)
+		{
+		    format_overflow_error(digstart);
+		    goto error;
+		}
 
 		if (j >= 0)
 		    min_field_width = j;
@@ -3049,10 +3101,18 @@ vim_vsnprintf_typval(
 	    {
 		// size_t could be wider than unsigned int; make sure we treat
 		// argument like common implementations do
-		unsigned int uj = *p++ - '0';
+		const char *digstart = p;
+		unsigned int uj;
 
-		while (VIM_ISDIGIT((int)(*p)))
-		    uj = 10 * uj + (unsigned int)(*p++ - '0');
+		if (get_unsigned_int(digstart, &p, &uj) == FAIL)
+		    goto error;
+
+		if (uj > MAX_ALLOWED_STRING_WIDTH)
+		{
+		    format_overflow_error(digstart);
+		    goto error;
+		}
+
 		min_field_width = uj;
 	    }
 
@@ -3066,25 +3126,35 @@ vim_vsnprintf_typval(
 		{
 		    // size_t could be wider than unsigned int; make sure we
 		    // treat argument like common implementations do
-		    unsigned int uj = *p++ - '0';
+		    const char *digstart = p;
+		    unsigned int uj;
 
-		    while (VIM_ISDIGIT((int)(*p)))
-			uj = 10 * uj + (unsigned int)(*p++ - '0');
+		    if (get_unsigned_int(digstart, &p, &uj) == FAIL)
+			goto error;
+
+		    if (uj > MAX_ALLOWED_STRING_WIDTH)
+		    {
+			format_overflow_error(digstart);
+			goto error;
+		    }
+
 		    precision = uj;
 		}
 		else if (*p == '*')
 		{
 		    int j;
+		    const char *digstart = p;
 
 		    p++;
 
 		    if (VIM_ISDIGIT((int)(*p)))
 		    {
 			// positional argument
-			unsigned int uj = *p++ - '0';
+			unsigned int uj;
 
-			while (VIM_ISDIGIT((int)(*p)))
-			    uj = 10 * uj + (unsigned int)(*p++ - '0');
+			if (get_unsigned_int(digstart, &p, &uj) == FAIL)
+			    goto error;
+
 			arg_idx = uj;
 
 			++p;
@@ -3094,8 +3164,15 @@ vim_vsnprintf_typval(
 # if defined(FEAT_EVAL)
 			tvs != NULL ? tv_nr(tvs, &arg_idx) :
 # endif
-			    (skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+			    (skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+					 &arg_cur, fmt),
 			    va_arg(ap, int));
+
+		    if (j > MAX_ALLOWED_STRING_WIDTH)
+		    {
+			format_overflow_error(digstart);
+			goto error;
+		    }
 
 		    if (j >= 0)
 			precision = j;
@@ -3167,7 +3244,8 @@ vim_vsnprintf_typval(
 # if defined(FEAT_EVAL)
 			    tvs != NULL ? tv_nr(tvs, &arg_idx) :
 # endif
-				(skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+				(skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+					     &arg_cur, fmt),
 				va_arg(ap, int));
 
 			// standard demands unsigned char
@@ -3182,7 +3260,8 @@ vim_vsnprintf_typval(
 # if defined(FEAT_EVAL)
 				tvs != NULL ? tv_str(tvs, &arg_idx, &tofree) :
 # endif
-				    (skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+				    (skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+						 &arg_cur, fmt),
 				    va_arg(ap, char *));
 
 		    if (str_arg == NULL)
@@ -3279,7 +3358,8 @@ vim_vsnprintf_typval(
 				 tvs != NULL ? (void *)tv_str(tvs, &arg_idx,
 									NULL) :
 # endif
-					(skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+					(skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+						     &arg_cur, fmt),
 					va_arg(ap, void *));
 
 			if (ptr_arg != NULL)
@@ -3292,7 +3372,8 @@ vim_vsnprintf_typval(
 				    tvs != NULL ?
 					   (uvarnumber_T)tv_nr(tvs, &arg_idx) :
 # endif
-					(skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+					(skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+						     &arg_cur, fmt),
 					va_arg(ap, uvarnumber_T));
 
 			if (bin_arg != 0)
@@ -3310,7 +3391,8 @@ vim_vsnprintf_typval(
 # if defined(FEAT_EVAL)
 					tvs != NULL ? tv_nr(tvs, &arg_idx) :
 # endif
-					    (skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+					    (skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+							 &arg_cur, fmt),
 					    va_arg(ap, int));
 
 			    if (int_arg > 0)
@@ -3323,7 +3405,8 @@ vim_vsnprintf_typval(
 # if defined(FEAT_EVAL)
 					tvs != NULL ? tv_nr(tvs, &arg_idx) :
 # endif
-					    (skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+					    (skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+							 &arg_cur, fmt),
 					    va_arg(ap, long int));
 
 			    if (long_arg > 0)
@@ -3336,7 +3419,8 @@ vim_vsnprintf_typval(
 # if defined(FEAT_EVAL)
 					tvs != NULL ? tv_nr(tvs, &arg_idx) :
 # endif
-					    (skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+					    (skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+							 &arg_cur, fmt),
 					    va_arg(ap, varnumber_T));
 
 			    if (llong_arg > 0)
@@ -3358,7 +3442,8 @@ vim_vsnprintf_typval(
 					    tvs != NULL ? (unsigned)
 							tv_nr(tvs, &arg_idx) :
 # endif
-						(skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+						(skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+							     &arg_cur, fmt),
 						va_arg(ap, unsigned int));
 
 				if (uint_arg != 0)
@@ -3370,7 +3455,8 @@ vim_vsnprintf_typval(
 					    tvs != NULL ? (unsigned long)
 							tv_nr(tvs, &arg_idx) :
 # endif
-						(skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+						(skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+							     &arg_cur, fmt),
 						va_arg(ap, unsigned long int));
 
 				if (ulong_arg != 0)
@@ -3382,7 +3468,8 @@ vim_vsnprintf_typval(
 					    tvs != NULL ? (uvarnumber_T)
 							tv_nr(tvs, &arg_idx) :
 # endif
-						(skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+						(skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+							     &arg_cur, fmt),
 						va_arg(ap, uvarnumber_T));
 
 				if (ullong_arg != 0)
@@ -3584,7 +3671,8 @@ vim_vsnprintf_typval(
 # if defined(FEAT_EVAL)
 			tvs != NULL ? tv_float(tvs, &arg_idx) :
 # endif
-			    (skip_to_arg(ap_types, ap_start, &ap, &arg_idx, &arg_cur),
+			    (skip_to_arg(ap_types, ap_start, &ap, &arg_idx,
+					 &arg_cur, fmt),
 			    va_arg(ap, double));
 
 		    abs_f = f < 0 ? -f : f;
@@ -3873,7 +3961,8 @@ vim_vsnprintf_typval(
     if (tvs != NULL && tvs[num_posarg != 0 ? num_posarg : arg_idx - 1].v_type != VAR_UNKNOWN)
 	emsg(_(e_too_many_arguments_to_printf));
 
-    vim_free(ap_types);
+error:
+    vim_free((char*)ap_types);
     va_end(ap);
 
     // Return the number of characters formatted (excluding trailing nul

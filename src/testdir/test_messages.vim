@@ -162,8 +162,18 @@ func Test_echospace()
   call assert_equal(&columns - 12, v:echospace)
   set showcmd ruler
   call assert_equal(&columns - 29, v:echospace)
+  set showcmdloc=statusline
+  call assert_equal(&columns - 19, v:echospace)
+  set showcmdloc=tabline
+  call assert_equal(&columns - 19, v:echospace)
+  call assert_fails('set showcmdloc=leap', 'E474:')
+  call assert_equal(&columns - 19, v:echospace)
+  set showcmdloc=last
+  call assert_equal(&columns - 29, v:echospace)
+  call assert_fails('set showcmdloc=jump', 'E474:')
+  call assert_equal(&columns - 29, v:echospace)
 
-  set ruler& showcmd&
+  set ruler& showcmd& showcmdloc&
 endfunc
 
 func Test_warning_scroll()
@@ -476,6 +486,29 @@ func Test_echo_string_partial()
   function CountSpaces()
   endfunction
   call assert_equal("function('CountSpaces', [{'ccccccccccc': ['ab', 'cd'], 'aaaaaaaaaaa': v:false, 'bbbbbbbbbbbb': ''}])", string(function('CountSpaces', [#{aaaaaaaaaaa: v:false, bbbbbbbbbbbb: '', ccccccccccc: ['ab', 'cd']}])))
+endfunc
+
+" Test that fileinfo is shown properly when 'cmdheight' has just decreased
+" due to switching tabpage and 'shortmess' doesn't contain 'o' or 'O'.
+func Test_fileinfo_tabpage_cmdheight()
+  CheckRunVimInTerminal
+
+  let content =<< trim END
+    set shortmess-=o
+    set shortmess-=O
+    set shortmess-=F
+    tabnew
+    set cmdheight=2
+    tabprev
+    edit Xfileinfo.txt
+  END
+
+  call writefile(content, 'Xtest_fileinfo_tabpage_cmdheight', 'D')
+  let buf = RunVimInTerminal('-S Xtest_fileinfo_tabpage_cmdheight', #{rows: 6})
+  call WaitForAssert({-> assert_match('^"Xfileinfo.txt" \[New\]', term_getline(buf, 6))})
+
+  " clean up
+  call StopVimInTerminal(buf)
 endfunc
 
 " Message output was previously overwritten by the fileinfo display, shown

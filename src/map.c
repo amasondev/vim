@@ -2574,7 +2574,10 @@ f_maplist(typval_T *argvars UNUSED, typval_T *rettv)
 		if ((d = dict_alloc()) == NULL)
 		    return;
 		if (list_append_dict(rettv->vval.v_list, d) == FAIL)
+		{
+		    dict_unref(d);
 		    return;
+		}
 
 		keys_buf = NULL;
 		did_simplify = FALSE;
@@ -3114,7 +3117,7 @@ did_set_langmap(optset_T *args UNUSED)
 		    {
 			if (p[0] != ',')
 			{
-			    sprintf(args->os_errbuf,
+			    vim_snprintf(args->os_errbuf, args->os_errbuflen,
 				    _(e_langmap_extra_characters_after_semicolon_str),
 				    p);
 			    return args->os_errbuf;

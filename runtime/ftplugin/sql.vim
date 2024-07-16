@@ -3,6 +3,8 @@
 " Version:     12.0
 " Maintainer:  David Fishburn <dfishburn dot vim at gmail dot com>
 " Last Change: 2017 Mar 07
+"              2024 Jan 14 by Vim Project (browsefilter)
+"              2024 May 18 by Vim Project (set comment options)
 " Download:    http://vim.sourceforge.net/script.php?script_id=454
 
 " For more details please use:
@@ -104,6 +106,8 @@ set cpo&vim
 setlocal formatoptions-=t
 setlocal formatoptions+=c
 
+setlocal comments=:-- commentstring=--\ %s
+
 " Functions/Commands to allow the user to change SQL syntax dialects
 " through the use of :SQLSetType <tab> for completion.
 " This works with both Vim 6 and 7.
@@ -140,7 +144,7 @@ if !exists("*SQL_SetType")
                         \ )
 
             " Remove duplicates, since sqlanywhere.vim can exist in the
-            " sytax, indent and ftplugin directory, yet we only want
+            " syntax, indent and ftplugin directory, yet we only want
             " to display the option once
             let index = match(sqls, '.\{-}\ze\n')
             while index > -1
@@ -204,7 +208,7 @@ if !exists("*SQL_SetType")
         endif
         let b:sql_type_override = new_sql_type
 
-        " Remove any cached SQL since a new sytax will have different
+        " Remove any cached SQL since a new syntax will have different
         " items and groups
         if !exists('g:loaded_sql_completion') || g:loaded_sql_completion >= 100
             call sqlcomplete#ResetCacheSyntax()
@@ -265,17 +269,21 @@ if exists("b:did_ftplugin") && exists("b:current_ftplugin") && b:current_ftplugi
     finish
 endif
 
-let b:undo_ftplugin = "setl comments< formatoptions< define< omnifunc<" .
+let b:undo_ftplugin = "setl comments< commentstring< formatoptions< define< omnifunc<" .
             \ " | unlet! b:browsefilter b:match_words"
 
 " Don't load another plugin for this buffer
 let b:did_ftplugin     = 1
 let b:current_ftplugin = 'sql'
 
-" Win32 can filter files in the browse dialog
-if has("gui_win32") && !exists("b:browsefilter")
-    let b:browsefilter = "SQL Files (*.sql)\t*.sql\n" .
-                \ "All Files (*.*)\t*.*\n"
+" Win32 and GTK can filter files in the browse dialog
+if (has("gui_win32") || has("gui_gtk")) && !exists("b:browsefilter")
+    let b:browsefilter = "SQL Files (*.sql)\t*.sql\n"
+    if has("win32")
+	let b:browsefilter .= "All Files (*.*)\t*\n"
+    else
+	let b:browsefilter .= "All Files (*)\t*\n"
+    endif
 endif
 
 " Some standard expressions for use with the matchit strings

@@ -1,7 +1,8 @@
 " Vim filetype plugin
-" Language:	Vim
-" Maintainer:	The Vim Project <https://github.com/vim/vim>
-" Last Change:	2023 Aug 10
+" Language:		Vim
+" Maintainer:		Doug Kearns <dougkearns@gmail.com>
+" Last Change:		2024 Apr 13
+" 			2024 May 23 by Riley Bruins <ribru17@gmail.com> ('commentstring')
 " Former Maintainer:	Bram Moolenaar <Bram@vim.org>
 
 " Only do this when not done yet for this buffer
@@ -50,15 +51,15 @@ setlocal isk+=#
 setlocal keywordprg=:help
 
 " Comments starts with # in Vim9 script.  We have to guess which one to use.
-if "\n" .. getline(1, 10)->join("\n") =~# '\n\s*vim9\%[script]\>'
-  setlocal commentstring=#%s
+if "\n" .. getline(1, 32)->join("\n") =~# '\n\s*vim9\%[script]\>'
+  setlocal commentstring=#\ %s
 else
   setlocal commentstring=\"%s
 endif
 
 " Set 'comments' to format dashed lists in comments, both in Vim9 and legacy
 " script.
-setlocal com=sO:#\ -,mO:#\ \ ,eO:##,:#,sO:\"\ -,mO:\"\ \ ,eO:\"\",:\"
+setlocal com=sO:#\ -,mO:#\ \ ,eO:##,:#\\\ ,:#,sO:\"\ -,mO:\"\ \ ,eO:\"\",:\"\\\ ,:\"
 
 " set 'include' to recognize import commands
 setlocal include=\\v^\\s*import\\s*(autoload)?
@@ -85,8 +86,8 @@ if !exists("no_plugin_maps") && !exists("no_vim_maps")
   vnoremap <silent><buffer> ][ m':<C-U>exe "normal! gv"<Bar>call search('^\s*end\(f\%[unction]\\|\(export\s\+\)\?def\)\>', "W")<CR>
 
   " Move around comments
-  nnoremap <silent><buffer> ]" :call search('^\(\s*".*\n\)\@<!\(\s*"\)', "W")<CR>
-  vnoremap <silent><buffer> ]" :<C-U>exe "normal! gv"<Bar>call search('^\(\s*".*\n\)\@<!\(\s*"\)', "W")<CR>
+  nnoremap <silent><buffer> ]" :call search('\%(^\s*".*\n\)\@<!\%(^\s*"\)', "W")<CR>
+  vnoremap <silent><buffer> ]" :<C-U>exe "normal! gv"<Bar>call search('\%(^\s*".*\n\)\@<!\%(^\s*"\)', "W")<CR>
   nnoremap <silent><buffer> [" :call search('\%(^\s*".*\n\)\%(^\s*"\)\@!', "bW")<CR>
   vnoremap <silent><buffer> [" :<C-U>exe "normal! gv"<Bar>call search('\%(^\s*".*\n\)\%(^\s*"\)\@!', "bW")<CR>
 endif

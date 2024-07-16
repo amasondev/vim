@@ -893,7 +893,7 @@ func Test_helpgrep()
 endfunc
 
 def Test_helpgrep_vim9_restore_cpo()
-  assert_equal('aABceFs', &cpo)
+  assert_equal('aABceFsz', &cpo)
 
   var rtp_save = &rtp
   var dir = 'Xruntime/after'
@@ -905,7 +905,7 @@ def Test_helpgrep_vim9_restore_cpo()
   cwindow
   silent helpgrep grail
 
-  assert_equal('aABceFs', &cpo)
+  assert_equal('aABceFsz', &cpo)
   &rtp = rtp_save
   cclose
   helpclose
@@ -6445,6 +6445,125 @@ func Test_quickfix_buffer_contents()
   copen
   call assert_equal(['filename|pattern| text'], getline(1, '$'))  " The assert failed with Vim v9.0.0736; '| text' did not appear after the pattern.
   call setqflist([], 'f')
+endfunc
+
+" Test for "%b" in "errorformat"
+func Test_efm_format_b()
+  call setqflist([], 'f')
+  new
+  call setline(1, ['1: abc', '1: def', '1: ghi'])
+  let b1 = bufnr()
+  new
+  call setline(1, ['2: abc', '2: def', '2: ghi'])
+  let b2 = bufnr()
+  new
+  call setline(1, ['3: abc', '3: def', '3: ghi'])
+  let b3 = bufnr()
+  new
+  let lines =<< trim eval END
+    {b1}:1:1
+    {b2}:2:2
+    {b3}:3:3
+  END
+  call setqflist([], ' ', #{lines: lines, efm: '%b:%l:%c'})
+  cfirst
+  call assert_equal([b1, 1, 1], [bufnr(), line('.'), col('.')])
+  cnext
+  call assert_equal([b2, 2, 2], [bufnr(), line('.'), col('.')])
+  cnext
+  call assert_equal([b3, 3, 3], [bufnr(), line('.'), col('.')])
+  enew!
+
+  " Use a non-existing buffer
+  let lines =<< trim eval END
+    9991:1:1:m1
+    9992:2:2:m2
+    {b3}:3:3:m3
+  END
+  call setqflist([], ' ', #{lines: lines, efm: '%b:%l:%c:%m'})
+  cfirst | cnext
+  call assert_equal([b3, 3, 3], [bufnr(), line('.'), col('.')])
+  " Lines with non-existing buffer numbers should be used as non-error lines
+  call assert_equal([
+    \ #{lnum: 0, bufnr: 0, end_lnum: 0, pattern: '', valid: 0, vcol: 0, nr: -1,
+    \   module: '', type: '', end_col: 0, col: 0, text: '9991:1:1:m1'},
+    \ #{lnum: 0, bufnr: 0, end_lnum: 0, pattern: '', valid: 0, vcol: 0, nr: -1,
+    \   module: '', type: '', end_col: 0, col: 0, text: '9992:2:2:m2'},
+    \ #{lnum: 3, bufnr: b3, end_lnum: 0, pattern: '', valid: 1, vcol: 0,
+    \   nr: -1, module: '', type: '', end_col: 0, col: 3, text: 'm3'}],
+    \ getqflist())
+  %bw!
+  call setqflist([], 'f')
+endfunc
+
+func XbufferTests_range(cchar)
+  call s:setup_commands(a:cchar)
+
+  enew!
+  let lines =<< trim END
+    Xtestfile7:700:10:Line 700
+    Xtestfile8:800:15:Line 800
+  END
+  silent! call setline(1, lines)
+  norm! Vy
+  " Note: We cannot use :Xbuffer here,
+  " it doesn't properly fail, so we need to
+  " test using the raw c/l commands.
+  " (also further down)
+  if (a:cchar == 'c')
+     exe "'<,'>cbuffer!"
+  else
+    exe "'<,'>lbuffer!"
+  endif
+  let l = g:Xgetlist()
+  call assert_true(len(l) == 1 &&
+	\ l[0].lnum == 700 && l[0].col == 10 && l[0].text ==# 'Line 700')
+
+  enew!
+  let lines =<< trim END
+    Xtestfile9:900:55:Line 900
+    Xtestfile10:950:66:Line 950
+  END
+  silent! call setline(1, lines)
+  if (a:cchar == 'c')
+    1cgetbuffer
+  else
+    1lgetbuffer
+  endif
+  let l = g:Xgetlist()
+  call assert_true(len(l) == 1 &&
+	\ l[0].lnum == 900 && l[0].col == 55 && l[0].text ==# 'Line 900')
+
+  enew!
+  let lines =<< trim END
+    Xtestfile11:700:20:Line 700
+    Xtestfile12:750:25:Line 750
+  END
+  silent! call setline(1, lines)
+  if (a:cchar == 'c')
+    1,1caddbuffer
+  else
+    1,1laddbuffer
+  endif
+  let l = g:Xgetlist()
+  call assert_true(len(l) == 2 &&
+	\ l[0].lnum == 900 && l[0].col == 55 && l[0].text ==# 'Line 900' &&
+	\ l[1].lnum == 700 && l[1].col == 20 && l[1].text ==# 'Line 700')
+  enew!
+
+  " Check for invalid range
+  " Using Xbuffer will not run the range check in the cbuffer/lbuffer
+  " commands. So directly call the commands.
+  if (a:cchar == 'c')
+      call assert_fails('900,999caddbuffer', 'E16:')
+  else
+      call assert_fails('900,999laddbuffer', 'E16:')
+  endif
+endfunc
+
+func Test_cbuffer_range()
+  call XbufferTests_range('c')
+  call XbufferTests_range('l')
 endfunc
 
 " vim: shiftwidth=2 sts=2 expandtab
